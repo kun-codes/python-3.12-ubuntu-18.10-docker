@@ -1,0 +1,53 @@
+name: Build and Push to Docker Hub
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'Dockerfile'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get current Python version from Dockerfile
+        id: currver
+        run: |
+          ver=$(grep -E '^ENV PYTHON_VERSION=' Dockerfile | head -n1 | cut -d= -f2)
+          echo "pyver=${ver}" >> $GITHUB_OUTPUT
+
+      - name: Get previous Python version from git history
+        id: prevver
+        run: |
+          prev=$(git show HEAD~1:Dockerfile | grep -E '^ENV PYTHON_VERSION=' | head -n1 | cut -d= -f2 || true)
+          echo "pyver_prev=${prev}" >> $GITHUB_OUTPUT
+
+      - name: Set image tags
+        id: tags
+        run: |
+          TAGS="${{ secrets.DOCKERHUB_USERNAME }}/python-3.12-ubuntu-18.10:${{ steps.currver.outputs.pyver }}"
+          if [ -n "${{ steps.prevver.outputs.pyver_prev }}" ]; then
+            TAGS="$TAGS,${{ secrets.DOCKERHUB_USERNAME }}/python-3.12-ubuntu-18.10:${{ steps.prevver.outputs.pyver_prev }}"
+          fi
+          TAGS="$TAGS,${{ secrets.DOCKERHUB_USERNAME }}/python-3.12-ubuntu-18.10:latest"
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image with dynamic tags
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
